@@ -1,11 +1,11 @@
 #include "utils.c"
+#include <sys/socket.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 
 struct shell_state {
     int fport;
     int sport;
-    int max_thread;
-    int delay;
-    int verbose;
 };
 
 struct shell_state* init_shell_state()
@@ -18,9 +18,6 @@ struct shell_state* init_shell_state()
 
     s->fport = 9001;
     s->sport = 9002;
-    s->max_thread = 5;
-    s->delay = 0;
-    s->verbose = 0;
     return s;
 }
 
@@ -68,6 +65,38 @@ void shell_loop()
     free(shell_state);
 }
 
+int client()
+{
+    int fd, status, valread;
+    struct sockaddr_in serv_addr;
+    char* hello = "Hello from client";
+    char buffer[1024] = "";
+    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        c_log(ERR, "Socket creation error.");
+        return -1;
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(8080);
+
+    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+        c_log(ERR, "Invalid address/Address not supported");
+        return -1;
+    }
+
+    if ((status = connect(fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0) {
+        c_log(ERR, "Connection failed.");
+        return -1;
+    }
+
+    send(fd, hello, strlen(hello), 0);
+    valread = read(fd, buffer, 1024 - 1); // subtract 1 for null terminator at the end
+    c_log(INFO, buffer);
+
+    close(fd);
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    
+    return client();
 }
