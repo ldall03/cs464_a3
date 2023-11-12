@@ -1,102 +1,70 @@
-#include "utils.c"
-#include <sys/socket.h>
 #include <unistd.h>
-#include <arpa/inet.h>
+#include <wait.h>
+#include <poll.h>
 
-struct shell_state {
-    int fport;
-    int sport;
-};
+#include "utils.c"
 
-struct shell_state* init_shell_state()
+void run_extern(char** args)
 {
-    struct shell_state *s = malloc(sizeof(struct shell_state));
-    if (!s) {
-        c_log(ERR, "malloc error.");
-        return NULL;
-    }
+    // Create default search paths
+    char path1[256] = "/bin/";
+    char path2[256] = "/usr/bin/";
+    strcat(path1, args[0]);
+    strcat(path2, args[0]);
 
-    s->fport = 9001;
-    s->sport = 9002;
-    return s;
+    // Try every path, including the absolute path if default does not work
+    if (execve(path1, args, NULL) == 0) {
+    } else if (execve(path2, args, NULL) == 0) {
+    } else if (execve(args[0], args, NULL) == 0) {
+    } else {
+        printf("Command not recognized or could not be executed\n");
+        exit(11);
+    }
 }
 
-char* get_user_input()
-{
-    const int buffsize = 1024;
-    int position = 0;
-    char* buffer = malloc(sizeof(char) * buffsize);
-    if (!buffer) {
-        c_log(ERR, "malloc error.");
-        return NULL;
+int run_cmd(char* cmd, char* buffer, int buffsize, int* status) {
+    // Separate the string
+    char** args = split(cmd);
+
+    int p[2];
+    if (pipe(p) < 0) {
+        c_log(ERR, "Could not create pipe");
+        return -1;
     }
 
-    char c;
+    int pid;
+    if ((pid = fork()) < 0) {
+        c_log(ERR, "Could not fork");
+        close(p[0]);
+        close(p[1]);
+        return -1;
+    }
 
-    while (1) {
-        c = getchar();
+    if (pid == 0) {
+        close(p[0]); // Close reading end
+        
+        dup2(p[1], 1); // redirect stdout to pipe
+        dup2(p[1], 2); // redirect stderr to pipe
 
-        if (c == EOF || c == '\n') {
-            buffer[position] = '\0';
-            return buffer;
-        } else {
-            buffer[position++] = c;
+        run_extern(args);
+    }
+
+    wait(status);
+    *status = WEXITSTATUS(*status);
+
+        struct pollfd pollfd;
+        pollfd.fd = p[0];
+        pollfd.events = POLLIN;
+        int ret = poll(&pollfd, 1, 100);
+        int valread;
+        switch (ret) {
+            case -1: break;
+            case 0: break;
+            default:
+                valread = read(p[0], buffer, buffsize);
         }
-    }
-}
+    close(p[1]); // Close writing end
+    close(p[0]); // Close reading end
 
-void shell_loop()
-{
-    struct shell_state *shell_state = init_shell_state();
-
-    do {
-        printf("> ");
-
-        // Get line from user
-        char* command = get_user_input();
-        if (str_eq(command, ""))
-            continue;
-
-        // send command to server
-
-        // free stuff
-        free(command);
-    } while (1); // TODO break at some point
-    free(shell_state);
-}
-
-int client()
-{
-    int fd, status, valread;
-    struct sockaddr_in serv_addr;
-    char* hello = "Hello from client";
-    char buffer[1024] = "";
-    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        c_log(ERR, "Socket creation error.");
-        return -1;
-    }
-
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(8080);
-
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-        c_log(ERR, "Invalid address/Address not supported");
-        return -1;
-    }
-
-    if ((status = connect(fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0) {
-        c_log(ERR, "Connection failed.");
-        return -1;
-    }
-
-    send(fd, hello, strlen(hello), 0);
-    valread = read(fd, buffer, 1024 - 1); // subtract 1 for null terminator at the end
-    c_log(INFO, buffer);
-
-    close(fd);
-    return 0;
-}
-
-int main(int argc, char** argv) {
-    return client();
+    return valread;
 }
